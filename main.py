@@ -15,10 +15,8 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
 )
-### ИЗМЕНЕНИЕ: Импорты для вебхука
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
-###
 
 from dotenv import load_dotenv
 
@@ -26,20 +24,18 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
+# ИЗМЕНЕНИЕ 1: Читаем новый секретный ключ для вебхука
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET") 
 
-### ИЗМЕНЕНИЕ: Настройки для вебхука
-# Render предоставляет URL в переменной окружения RENDER_EXTERNAL_URL
-# Локально для теста можно использовать ngrok или аналоги
+# Настройки для вебхука
 BASE_WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL")
-# Путь для вебхука, лучше сделать его секретным
 WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
-# Полный адрес для установки вебхука
 WEBHOOK_URL = f"{BASE_WEBHOOK_URL}{WEBHOOK_PATH}"
-###
 
-# Проверка на наличие токенов
-if not BOT_TOKEN or not CHANNEL_ID:
-    raise ValueError("Необходимо установить переменные окружения BOT_TOKEN и CHANNEL_ID")
+
+# ИЗМЕНЕНИЕ 2: Обновляем проверку переменных
+if not BOT_TOKEN or not CHANNEL_ID or not WEBHOOK_SECRET:
+    raise ValueError("Необходимо установить переменные окружения BOT_TOKEN, CHANNEL_ID и WEBHOOK_SECRET")
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
@@ -69,9 +65,6 @@ class ReviewState(StatesGroup):
     waiting_for_rating = State()
     waiting_for_anonymity_choice = State()
 
-# --- Все хендлеры (обработчики сообщений и кнопок) остаются БЕЗ ИЗМЕНЕНИЙ ---
-# ... (здесь весь ваш код с cmd_start, about_us, start_review и т.д.) ...
-# Я их скрыл для краткости, просто оставьте их как есть в вашем файле.
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
@@ -194,43 +187,35 @@ async def process_anonymity_and_publish(callback: types.CallbackQuery, state: FS
     await callback.message.answer("Чем еще могу помочь?", reply_markup=main_kb)
     await callback.answer()
 
+
 # --- Новая логика запуска ---
 
-### ИЗМЕНЕНИЕ: Функция, которая выполняется при старте приложения
 async def on_startup(bot: Bot):
-    # Устанавливаем вебхук
-    await bot.set_webhook(WEBHOOK_URL, secret_token=BOT_TOKEN)
+    # ИЗМЕНЕНИЕ 3: Используем WEBHOOK_SECRET вместо BOT_TOKEN
+    await bot.set_webhook(WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
     logger.info(f"Вебхук установлен на URL: {WEBHOOK_URL}")
 
 
-### ИЗМЕНЕНИЕ: Функция, которая выполняется при выключении приложения
 async def on_shutdown(bot: Bot):
-    # Удаляем вебхук
     await bot.delete_webhook()
     logger.info("Вебхук удален.")
 
 
-### ИЗМЕНЕНИЕ: Главная функция main
 def main():
-    # Регистрируем функции startup и shutdown
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
-    # Создаем веб-приложение
     app = web.Application()
-    # Создаем обработчик вебхуков
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
-        secret_token=BOT_TOKEN,
+        # ИЗМЕНЕНИЕ 4: Используем WEBHOOK_SECRET вместо BOT_TOKEN
+        secret_token=WEBHOOK_SECRET,
     )
-    # Регистрируем обработчик по нашему пути
     webhook_requests_handler.register(app, path=WEBHOOK_PATH)
 
-    # Настраиваем и запускаем приложение
     setup_application(app, dp, bot=bot)
     
-    # Render предоставляет порт в переменной PORT, по умолчанию 8080
     port = int(os.environ.get('PORT', 8080))
     web.run_app(app, host="0.0.0.0", port=port)
 
