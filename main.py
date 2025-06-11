@@ -72,6 +72,7 @@ class ReviewState(StatesGroup):
 
 
 # --- Обработчики сообщений и колбэков ---
+# ... (весь ваш код обработчиков остается без изменений, я его сократил для краткости) ...
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
     await message.answer(
@@ -193,18 +194,19 @@ async def process_anonymity_and_publish(callback: types.CallbackQuery, state: FS
     await callback.message.answer("Чем еще могу помочь?", reply_markup=main_kb)
     await callback.answer()
 
-
 # --- ЛОГИКА ЗАПУСКА ВЕБ-СЕРВЕРА ---
 
-async def on_startup(bot_instance: Bot):
+# ИСПРАВЛЕНИЕ ОШИБКИ: аргумент должен называться `bot`
+async def on_startup(bot: Bot):
     """Выполняется при старте: устанавливает вебхук."""
-    await bot_instance.set_webhook(url=WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
+    await bot.set_webhook(url=WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
     logger.info(f"Вебхук установлен на URL: {WEBHOOK_URL}")
 
-async def on_shutdown(bot_instance: Bot):
+# ИСПРАВЛЕНИЕ ОШИБКИ: аргумент должен называться `bot`
+async def on_shutdown(bot: Bot):
     """Выполняется при остановке: удаляет вебхук."""
-    await bot_instance.delete_webhook()
-    await bot_instance.session.close()
+    await bot.delete_webhook()
+    await bot.session.close()
     logger.info("Вебхук удален и сессия закрыта.")
 
 async def ping_server(request):
