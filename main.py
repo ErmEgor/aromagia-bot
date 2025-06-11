@@ -25,14 +25,15 @@ load_dotenv()
 # --- Настройки ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET") 
-
-# Настройки для вебхука
-# BASE_WEBHOOK_URL должен быть вашим URL с Render, например "https://my-coffee-bot.onrender.com"
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 BASE_WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL")
-# Путь вебхука НЕ должен содержать токен, если вы используете secret_token.
-# Это безопаснее и является лучшей практикой.
-WEBHOOK_PATH = "/webhook" 
+
+# Хост и порт для запуска сервера
+WEBAPP_HOST = "0.0.0.0"
+WEBAPP_PORT = int(os.getenv("PORT", 8080))
+
+# Безопасный путь для вебхука
+WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = f"{BASE_WEBHOOK_URL}{WEBHOOK_PATH}"
 
 # Проверка переменных
@@ -58,7 +59,6 @@ main_kb = ReplyKeyboardMarkup(
         [KeyboardButton(text="ℹ️ О нас")],
     ],
     resize_keyboard=True,
-    one_time_keyboard=False,
 )
 cancel_kb = InlineKeyboardMarkup(
     inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_review")]]
@@ -194,46 +194,60 @@ async def process_anonymity_and_publish(callback: types.CallbackQuery, state: FS
     await callback.answer()
 
 
-# --- Логика запуска и веб-сервер ---
+# --- ЛОГИКА ЗАПУСКА ВЕБ-СЕРВЕРА ---
 
-# <<< ИЗМЕНЕНИЕ 1: Добавляем обработчик для UptimeRobot >>>
-async def ping_server(request):
-    """Отвечает на 'ping' запросы от сервисов мониторинга."""
-    return web.Response(text="ok")
-
-
-async def on_startup(bot: Bot):
-    await bot.set_webhook(url=WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
+async def on_startup(bot_instance: Bot):
+    """Выполняется при старте: устанавливает вебхук."""
+    await bot_instance.set_webhook(url=WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
     logger.info(f"Вебхук установлен на URL: {WEBHOOK_URL}")
 
+async def on_shutdown(bot_instance: Bot):
+    """Выполняется при остановке: удаляет вебхук."""
+    await bot_instance.delete_webhook()
+    await bot_instance.session.close()
+    logger.info("Вебхук удален и сессия закрыта.")
 
-async def on_shutdown(bot: Bot):
-    await bot.delete_webhook()
-    logger.info("Вебхук удален.")
+async def ping_server(request):
+    """Отвечает на 'ping' запросы от сервисов мониторинга."""
+    logger.info("Получен ping-запрос от мониторинга.")
+    return web.Response(text="ok")
 
-
-def main():
+async def main():
+    # Регистрируем lifecycle-хуки
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
+    # Создаем экземпляр aiohttp-приложения
     app = web.Application()
-
-    # <<< ИЗМЕНЕНИЕ 2: Регистрируем новый маршрут для пинга >>>
+    
+    # Добавляем маршрут для пинга
     app.router.add_get("/ping", ping_server)
 
+    # Создаем обработчик вебхуков и регистрируем его
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
         secret_token=WEBHOOK_SECRET,
     )
-    # Регистрируем основной обработчик для Telegram
     webhook_requests_handler.register(app, path=WEBHOOK_PATH)
 
+    # Устанавливаем приложение aiogram
     setup_application(app, dp, bot=bot)
+
+    # Запускаем сервер надежным способом
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host=WEBAPP_HOST, port=WEBAPP_PORT)
+    await site.start()
     
-    port = int(os.environ.get('PORT', 8080))
-    web.run_app(app, host="0.0.0.0", port=port)
+    logger.info(f"Сервер запущен на {WEBAPP_HOST}:{WEBAPP_PORT}")
+
+    # Ждем вечно, пока приложение не остановят
+    await asyncio.Event().wait()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Бот остановлен.")
