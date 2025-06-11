@@ -22,20 +22,25 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# --- Настройки ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
-# ИЗМЕНЕНИЕ 1: Читаем новый секретный ключ для вебхука
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET") 
 
 # Настройки для вебхука
+# BASE_WEBHOOK_URL должен быть вашим URL с Render, например "https://my-coffee-bot.onrender.com"
 BASE_WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL")
-WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
+# Путь вебхука НЕ должен содержать токен, если вы используете secret_token.
+# Это безопаснее и является лучшей практикой.
+WEBHOOK_PATH = "/webhook" 
 WEBHOOK_URL = f"{BASE_WEBHOOK_URL}{WEBHOOK_PATH}"
 
-
-# ИЗМЕНЕНИЕ 2: Обновляем проверку переменных
-if not BOT_TOKEN or not CHANNEL_ID or not WEBHOOK_SECRET:
-    raise ValueError("Необходимо установить переменные окружения BOT_TOKEN, CHANNEL_ID и WEBHOOK_SECRET")
+# Проверка переменных
+if not all([BOT_TOKEN, CHANNEL_ID, WEBHOOK_SECRET, BASE_WEBHOOK_URL]):
+    raise ValueError(
+        "Необходимо установить переменные окружения: "
+        "BOT_TOKEN, CHANNEL_ID, WEBHOOK_SECRET, RENDER_EXTERNAL_URL"
+    )
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
@@ -46,7 +51,7 @@ bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTM
 dp = Dispatcher()
 
 
-# --- Клавиатуры (остаются без изменений) ---
+# --- Клавиатуры ---
 main_kb = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="✍️ Оставить отзыв")],
@@ -59,13 +64,14 @@ cancel_kb = InlineKeyboardMarkup(
     inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_review")]]
 )
 
-# --- Состояния (остаются без изменений) ---
+# --- Состояния ---
 class ReviewState(StatesGroup):
     waiting_for_review_text = State()
     waiting_for_rating = State()
     waiting_for_anonymity_choice = State()
 
 
+# --- Обработчики сообщений и колбэков ---
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
     await message.answer(
@@ -188,11 +194,16 @@ async def process_anonymity_and_publish(callback: types.CallbackQuery, state: FS
     await callback.answer()
 
 
-# --- Новая логика запуска ---
+# --- Логика запуска и веб-сервер ---
+
+# <<< ИЗМЕНЕНИЕ 1: Добавляем обработчик для UptimeRobot >>>
+async def ping_server(request):
+    """Отвечает на 'ping' запросы от сервисов мониторинга."""
+    return web.Response(text="ok")
+
 
 async def on_startup(bot: Bot):
-    # ИЗМЕНЕНИЕ 3: Используем WEBHOOK_SECRET вместо BOT_TOKEN
-    await bot.set_webhook(WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
+    await bot.set_webhook(url=WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
     logger.info(f"Вебхук установлен на URL: {WEBHOOK_URL}")
 
 
@@ -206,12 +217,16 @@ def main():
     dp.shutdown.register(on_shutdown)
 
     app = web.Application()
+
+    # <<< ИЗМЕНЕНИЕ 2: Регистрируем новый маршрут для пинга >>>
+    app.router.add_get("/ping", ping_server)
+
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
-        # ИЗМЕНЕНИЕ 4: Используем WEBHOOK_SECRET вместо BOT_TOKEN
         secret_token=WEBHOOK_SECRET,
     )
+    # Регистрируем основной обработчик для Telegram
     webhook_requests_handler.register(app, path=WEBHOOK_PATH)
 
     setup_application(app, dp, bot=bot)
